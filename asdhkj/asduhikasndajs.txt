@@ -1,0 +1,182 @@
+harbor仓库参考[harbor仓库](https://www.yuque.com/xiong3731/yunwei/bgbt253uwxcx99gi)
+
+# 1.自建registry，以及push的方式
+```shell
+docker pull registry
+docker run -itd -v /yumrepo/docker_registry:/var/lib/registry --name "my_registry" --restart=always -p 5000:5000 registry
+[root@localhost ~]# vim /etc/docker/daemon.json 
+{
+    "registry-mirrors": [
+        "https://hub.uuuadc.top/",
+        "https://docker.anyhub.us.kg",
+        "https://docker.chenby.cn",
+        "https://docker.m.daocloud.io",
+        "https://atomhub.openatom.cn",
+        "https://docker.awsl9527.cn",
+        "https://hubs.llx.pp.ua",
+        "https://quay.llx.pp.ua",
+        "https://gcr.llx.pp.ua",
+        "https://k8s-gcr.llx.pp.ua",
+        "https://k8s.llx.pp.ua",
+        "https://ghcr.llx.pp.ua",
+        "https://cloudsmith.llx.pp.ua",
+        "https://nvcr.llx.pp.ua"
+    ],
+    "insecure-registries": ["192.168.43.157:5000"]
+}
+
+docker tag registry:latest 192.168.43.157:5000/registry:latest
+docker push 192.168.43.157:5000/registry:latest
+```
+
+> [http://192.168.43.157:5000/v2/_catalog](http://192.168.43.157:5000/v2/_catalog) 可以在网页查看有哪些镜像
+>
+> [http://192.168.43.157:5000/v2/registry/tags/list](http://192.168.43.157:5000/v2/registry/tags/list) 可以查看镜像有哪些版本
+>
+> 如果push类似图中多目录的镜像,则相应地要增加目录的层级![](https://cdn.nlark.com/yuque/0/2024/png/36178385/1732114207782-dc0eda98-98cc-4cd5-b225-c7fbeb22fe7c.png)
+>
+
+# 2.在远程的机器上操作（192.168.43.188）
+```shell
+[root@localhost ~]# vim /etc/docker/daemon.json 
+{
+    "registry-mirrors": [
+        "https://hub.uuuadc.top/",
+        "https://docker.anyhub.us.kg",
+        "https://docker.chenby.cn",
+        "https://docker.m.daocloud.io",
+        "https://atomhub.openatom.cn",
+        "https://docker.awsl9527.cn",
+        "https://hubs.llx.pp.ua",
+        "https://quay.llx.pp.ua",
+        "https://gcr.llx.pp.ua",
+        "https://k8s-gcr.llx.pp.ua",
+        "https://k8s.llx.pp.ua",
+        "https://ghcr.llx.pp.ua",
+        "https://cloudsmith.llx.pp.ua",
+        "https://nvcr.llx.pp.ua"
+    ],
+    "insecure-registries": ["192.168.43.157:5000"]
+}
+[root@k8s-master1 ~]# docker pull 192.168.43.157:5000/registry:latest
+```
+
+# 3.设置用户名密码的认证
+```shell
+# 创建registry的工作目录
+mkdir /yumrepo/docker_registry
+# 创建凭据的文件夹
+mkdir -p /yumrepo/docker_registry/etc/registry/auth/ 
+# 安装htpasswd工具
+yum -y install httpd-tools
+# 创建一个叫admin的用户
+# -B：使用 bcrypt 加密密码。-b：直接从命令行提供密码。-n：只输出加密后的密码，而不写入文件（但结合 > 会将输出重定向到文件）。
+htpasswd -Bbn admin ${PASSWORD} > /yumrepo/docker_registry/etc/registry/auth/passwd
+[root@localhost ~]# cat /yumrepo/docker_registry/etc/registry/auth/passwd
+admin:$2y$05$afNxX5ExwmBA7bXLoNd87.LvjUGd.naBAXIBEurbMpmOOpnmomsmC
+
+[root@localhost ~]# vim /yumrepo/docker_registry/etc/registry/config.yml
+version: 0.1
+log:
+  fields:
+    service: registry
+storage:
+  cache:
+    blobdescriptor: inmemory
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete: #配置删除权限,默认安装的Registry不支持删除
+    enabled: true
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+
+```
+
+```shell
+docker run -d -p 5000:5000 \
+--restart=always \
+--name registry_private \
+-v /yumrepo/docker_registry/etc/registry/auth:/etc/registry/auth \
+-v /yumrepo/docker_registry/etc/registry/config.yml:/etc/docker/registry/config.yml \
+-v /yumrepo/docker_registry/var/lib/registry:/var/lib/registry \
+-e "REGISTRY_AUTH=htpasswd" \
+-e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+-e "REGISTRY_AUTH_HTPASSWD_PATH=/etc/registry/auth/passwd" \
+registry:latest
+
+```
+
+```shell
+# 直接push，报错
+[root@localhost docker_registry]# docker push 192.168.43.157:5000/registry:latest
+The push refers to repository [192.168.43.157:5000/registry]
+7827cbf539f4: Preparing 
+d28d4e94d6f3: Preparing 
+028476fc17e0: Preparing 
+96a01afdff54: Preparing 
+f9fc769d3350: Preparing 
+no basic auth credentials
+# 登录
+[root@localhost docker_registry]# docker login 192.168.43.157:5000 -u admin -p ${PASSWORD}
+docker push 192.168.43.157:5000/registry:latest # 成功登录
+```
+
+# 4.证书加密(有误，找不到合适的教程)
+自行生成证书
+
+[openssl自制证书](https://www.yuque.com/xiong0307/xslewh/awloh05ltls6e73g)
+
+```shell
+# 目前手上有三个文件ssl.crt  ssl.csr  ssl.key
+mkdir /yumrepo/docker_registry/etc/registry/certs/
+cp *.crt *.key /yumrepo/docker_registry/etc/registry/certs/
+[root@localhost ~]# vim /yumrepo/docker_registry/etc/registry/config.yml
+version: 0.1
+log:
+  fields:
+    service: registry
+storage:
+  cache:
+    blobdescriptor: inmemory
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete: #配置删除权限,默认安装的Registry不支持删除
+    enabled: true
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options: [nosniff]
+  tls:
+    cert: /etc/registry/certs/ssl.crt
+    key: /etc/registry/certs/ssl.key
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
+```
+
+```shell
+
+docker run -d -p 5000:5000 \
+  --restart=always \
+  --name registry_private \
+  -v /yumrepo/docker_registry/etc/registry/auth:/etc/registry/auth \
+  -v /yumrepo/docker_registry/etc/registry/config.yml:/etc/docker/registry/config.yml \
+  -v /yumrepo/docker_registry/var/lib/registry:/var/lib/registry \
+  -v /yumrepo/docker_registry/etc/registry/certs:/etc/registry/certs \
+  -e "REGISTRY_AUTH=htpasswd" \
+  -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+  -e "REGISTRY_AUTH_HTPASSWD_PATH=/etc/registry/auth/passwd" \
+  registry:latest
+
+
+```
+
